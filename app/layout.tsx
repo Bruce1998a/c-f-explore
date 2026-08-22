@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.SITE_URL || 'http://localhost:3000'),
+  metadataBase: new URL('https://c-f-explore.bruce98.chatgpt.site'),
   title: 'C-F Explore · Clima y riesgos de Ecuador',
   description: 'Análisis interactivo de índices de El Niño y eventos peligrosos registrados en Ecuador.',
   openGraph: {
