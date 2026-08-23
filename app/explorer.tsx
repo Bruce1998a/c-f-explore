@@ -21,6 +21,8 @@ type EventRow = {
 type ChartSeries = { name: string; color: string; values: Array<number | null>; dashed?: boolean };
 type ApiPayload<T> = { rows: T[]; updatedAt?: string };
 
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';
+
 const MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 const INDEXES: Record<ClimateKey, { label: string; short: string }> = {
   anom34: { label: 'Niño 3.4 · anomalía', short: 'Niño 3.4' },
@@ -217,10 +219,13 @@ export default function Explorer() {
     const loadNoaa = async () => {
       let state: LoadState = 'live';
       let data: ApiPayload<NoaaRow>;
-      try { data = await readJson<NoaaRow>('/api/noaa'); }
+      try {
+        if (BASE_PATH) throw new Error('GitHub Pages usa el snapshot actualizado');
+        data = await readJson<NoaaRow>('/api/noaa');
+      }
       catch {
-        state = 'fallback';
-        try { data = await readJson<NoaaRow>('/data/noaa.json'); } catch { setNoaaState('fallback'); return; }
+        state = BASE_PATH ? 'live' : 'fallback';
+        try { data = await readJson<NoaaRow>(`${BASE_PATH}/data/noaa.json`); } catch { setNoaaState('fallback'); return; }
       }
       if (!Array.isArray(data.rows) || !data.rows.length) { setNoaaState('fallback'); return; }
       setNoaaRows(data.rows);
@@ -231,10 +236,13 @@ export default function Explorer() {
     const loadEvents = async () => {
       let state: LoadState = 'live';
       let data: ApiPayload<EventRow>;
-      try { data = await readJson<EventRow>('/api/events'); }
+      try {
+        if (BASE_PATH) throw new Error('GitHub Pages usa el snapshot actualizado');
+        data = await readJson<EventRow>('/api/events');
+      }
       catch {
-        state = 'fallback';
-        try { data = await readJson<EventRow>('/data/events.json'); } catch { setEventState('fallback'); return; }
+        state = BASE_PATH ? 'live' : 'fallback';
+        try { data = await readJson<EventRow>(`${BASE_PATH}/data/events.json`); } catch { setEventState('fallback'); return; }
       }
       if (!Array.isArray(data.rows) || !data.rows.length) { setEventState('fallback'); return; }
       setEventRows(data.rows); setUpdatedAt((current) => current || data.updatedAt || ''); setEventState(state);
