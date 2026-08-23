@@ -7,6 +7,7 @@ type ClimateKey = 'anom12' | 'anom3' | 'anom4' | 'anom34';
 type RiskMetric = 'events' | 'impacted' | 'deaths' | 'burnedHectares' | 'affectedRoadKilometers';
 type Grouping = 'province' | 'region' | 'month';
 type LoadState = 'loading' | 'live' | 'fallback';
+type RiskPaletteKey = 'coral' | 'ocean' | 'forest' | 'volcano' | 'violet';
 
 type NoaaRow = {
   year: number; month: number; nino12: number; anom12: number; nino3: number;
@@ -18,7 +19,7 @@ type EventRow = {
   impacted: number; deaths: number; burnedHectares: number; affectedRoadMeters: number;
 };
 
-type ChartSeries = { name: string; color: string; values: Array<number | null>; dashed?: boolean };
+type ChartSeries = { name: string; color: string; secondaryColor?: string; values: Array<number | null>; dashed?: boolean };
 type ApiPayload<T> = { rows: T[]; updatedAt?: string };
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';
@@ -37,6 +38,14 @@ const METRICS: Record<RiskMetric, { label: string; unit: string; short: string }
   deaths: { label: 'Personas fallecidas', unit: '', short: 'personas' },
   burnedHectares: { label: 'Cobertura vegetal quemada', unit: ' ha', short: 'hectáreas' },
   affectedRoadKilometers: { label: 'Vías afectadas', unit: ' km', short: 'kilómetros' },
+};
+
+const RISK_PALETTES: Record<RiskPaletteKey, { label: string; colors: [string, string] }> = {
+  coral: { label: 'Coral & menta', colors: ['#f36f50', '#36d6b6'] },
+  ocean: { label: 'Océano', colors: ['#087f8c', '#4cc9f0'] },
+  forest: { label: 'Bosque', colors: ['#2d6a4f', '#95d5b2'] },
+  volcano: { label: 'Volcán', colors: ['#b93434', '#f4a261'] },
+  violet: { label: 'Violeta', colors: ['#6f2dbd', '#c8b6ff'] },
 };
 
 const ECUADOR_PROVINCES = [
@@ -160,7 +169,10 @@ const DataCanvas = forwardRef<HTMLCanvasElement, {
           if (value === null) return;
           const x = plot.left + slot * index + slot / 2 + (seriesIndex - (series.length - 1) / 2) * (barWidth + 3);
           const y = yFor(value);
-          context.fillStyle = item.color;
+          const gradient = context.createLinearGradient(0, y, 0, plot.bottom);
+          gradient.addColorStop(0, item.color);
+          gradient.addColorStop(1, item.secondaryColor || item.color);
+          context.fillStyle = gradient;
           context.fillRect(x - barWidth / 2, y, barWidth, Math.max(2, plot.bottom - y));
         }));
       } else {
@@ -226,6 +238,7 @@ export default function Explorer() {
   const [region, setRegion] = useState('todas');
   const [metric, setMetric] = useState<RiskMetric>('burnedHectares');
   const [grouping, setGrouping] = useState<Grouping>('province');
+  const [riskPalette, setRiskPalette] = useState<RiskPaletteKey>('coral');
   const chartRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -317,6 +330,7 @@ export default function Explorer() {
   const peakValue = currentValues.length ? Math.max(...currentValues) : null;
   const riskTotal = riskSummary.reduce((sum, row) => sum + row[metric], 0);
   const riskLeader = riskSummary.find((row) => row[metric] > 0) || null;
+  const selectedRiskPalette = RISK_PALETTES[riskPalette];
 
   const status = view === 'climate' ? noaaState : eventState;
   const exportImage = () => {
@@ -363,13 +377,13 @@ export default function Explorer() {
         <aside className="controls">
           <div className="controls-heading"><span className="kicker">CONFIGURAR VISTA</span><button type="button" aria-label="Restablecer filtros" onClick={() => {
             if (view === 'climate') { setClimateIndex('anom34'); setYear(climateYears[0]); setCompareYear(climateYears.includes(1997) ? 1997 : climateYears[1]); }
-            else { setEvent('Incendio Forestal'); setEventYear('todos'); setProvince('todas'); setRegion('todas'); setMetric('burnedHectares'); setGrouping('province'); }
+            else { setEvent('Incendio Forestal'); setEventYear('todos'); setProvince('todas'); setRegion('todas'); setMetric('burnedHectares'); setGrouping('province'); setRiskPalette('coral'); }
           }}>↻</button></div>
 
           {view === 'climate' ? <>
             <label>Índice oceánico<select value={climateIndex} onChange={(e) => setClimateIndex(e.target.value as ClimateKey)}>{Object.entries(INDEXES).map(([key, item]) => <option key={key} value={key}>{item.label}</option>)}</select></label>
-            <label>Año actual o reciente<select value={year} onChange={(e) => setYear(Number(e.target.value))}>{climateYears.map((item) => <option key={item}>{item}</option>)}</select></label>
-            <label>Comparar con<select value={compareYear} onChange={(e) => setCompareYear(Number(e.target.value))}>{climateYears.filter((item) => item !== year).map((item) => <option key={item}>{item}{[1982,1997,2015].includes(item) ? ' · Niño fuerte' : ''}</option>)}</select></label>
+            <label>Año actual o reciente<select value={year} onChange={(e) => { const next = Number(e.target.value); setYear(next); if (next === compareYear) setCompareYear(climateYears.find((item) => item !== next) ?? next); }}>{climateYears.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+            <label>Comparar con<select value={compareYear} onChange={(e) => setCompareYear(Number(e.target.value))}>{climateYears.filter((item) => item !== year).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
             <div className="filter-note"><span>Umbral orientativo</span><strong>±0.5 °C</strong><small>El gráfico conserva los valores mensuales originales de NOAA.</small></div>
           </> : <>
             <label>Evento<select value={event} onChange={(e) => setEvent(e.target.value)}><option value="todos">Todos los eventos</option>{eventOptions.map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -378,6 +392,13 @@ export default function Explorer() {
             <label>Año<select value={eventYear} onChange={(e) => setEventYear(e.target.value)}><option value="todos">Todos los años</option>{eventYears.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label>Región<select value={region} onChange={(e) => { const next = e.target.value; setRegion(next); if (province !== 'todas' && next !== 'todas' && regionOf(province) !== next) setProvince('todas'); }}><option value="todas">Todas las regiones</option>{ECUADOR_REGIONS.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label>Provincia<select value={province} onChange={(e) => { const next = e.target.value; setProvince(next); if (next !== 'todas') setRegion(regionOf(next)); }}><option value="todas">Todas las provincias</option>{ECUADOR_PROVINCES.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <div className="palette-field">
+              <span>Paleta del gráfico</span>
+              <div className="palette-options" role="group" aria-label="Elegir paleta de colores">
+                {Object.entries(RISK_PALETTES).map(([key, palette]) => <button key={key} type="button" className={riskPalette === key ? 'selected' : ''} aria-label={`Usar paleta ${palette.label}`} aria-pressed={riskPalette === key} title={palette.label} onClick={() => setRiskPalette(key as RiskPaletteKey)}><i style={{ background: `linear-gradient(135deg, ${palette.colors[0]}, ${palette.colors[1]})` }} /></button>)}
+              </div>
+              <small>{selectedRiskPalette.label}</small>
+            </div>
             <div className="filter-note"><span>COBERTURA TERRITORIAL</span><strong>{provinceCoverage}/24 provincias</strong><small>{provinceCoverage === 24 ? 'La fuente cubre las 24 provincias del Ecuador.' : 'La lista oficial sigue visible; faltan registros en la fuente cargada.'}</small></div>
           </>}
           <button className="secondary-button" type="button" onClick={exportCsv}>Descargar tabla CSV <span>↓</span></button>
@@ -387,14 +408,14 @@ export default function Explorer() {
           <article className="analysis-card">
             <div className="card-head">
               <div><span className="kicker">{view === 'climate' ? 'COMPARACIÓN MENSUAL' : 'ANÁLISIS TERRITORIAL'}</span><h2>{view === 'climate' ? 'Anomalía de temperatura del mar' : METRICS[metric].label}</h2></div>
-              <div className="legend">{view === 'climate' ? <><span style={{ background:'#f36f50' }} />{year}<span className="dashed" style={{ background:'#0b766f' }} />{compareYear}</> : <><span style={{ background:'#f36f50' }} />{event === 'todos' ? 'Todos los eventos' : event}</>}</div>
+              <div className="legend">{view === 'climate' ? <><span style={{ background:'#f36f50' }} />{year}<span className="dashed" style={{ background:'#0b766f' }} />{compareYear}</> : <><span style={{ background:`linear-gradient(90deg, ${selectedRiskPalette.colors[0]}, ${selectedRiskPalette.colors[1]})` }} />{event === 'todos' ? 'Todos los eventos' : event}</>}</div>
             </div>
             <div className="canvas-wrap">
               <DataCanvas ref={chartRef} kind={view === 'climate' ? 'line' : 'bar'}
                 title={view === 'climate' ? `${INDEXES[climateIndex].short}: ${year} frente a ${compareYear}` : `${METRICS[metric].label} por ${grouping === 'province' ? 'provincia' : grouping === 'region' ? 'región' : 'mes'}`}
                 subtitle={view === 'climate' ? 'Anomalía mensual de TSM · °C' : `${event === 'todos' ? 'Todos los eventos' : event} · ${eventYear === 'todos' ? 'serie histórica' : eventYear}`}
                 labels={view === 'climate' ? MONTHS : riskSummary.map((row) => row.label)}
-                series={view === 'climate' ? climateSeries : [{ name: METRICS[metric].label, color: '#f36f50', values: riskSummary.map((row) => row[metric]) }]}
+                series={view === 'climate' ? climateSeries : [{ name: METRICS[metric].label, color: selectedRiskPalette.colors[0], secondaryColor: selectedRiskPalette.colors[1], values: riskSummary.map((row) => row[metric]) }]}
                 unit={view === 'climate' ? '°' : METRICS[metric].unit.trim()} />
             </div>
             <div className="insight-row">

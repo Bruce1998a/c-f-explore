@@ -49,6 +49,14 @@ a { color:inherit; text-decoration:none; }
 .filter-note span { font-size:8px; font-weight:900; letter-spacing:.1em; color:#0f8977; }
 .filter-note strong { font-family:Georgia,serif; font-size:20px; font-weight:500; }
 .filter-note small { color:var(--muted); font-size:9px; line-height:1.45; }
+.palette-field { display:grid; gap:8px; }
+.palette-field>span { font-size:11px; font-weight:800; }
+.palette-field>small { color:var(--muted); font-size:9px; }
+.palette-options { display:grid; grid-template-columns:repeat(5,1fr); gap:7px; }
+.palette-options button { min-width:0; height:30px; padding:3px; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:pointer; transition:.18s ease; }
+.palette-options button:hover { transform:translateY(-1px); border-color:rgba(7,44,53,.38); }
+.palette-options button.selected { border-color:var(--ink); box-shadow:0 0 0 2px rgba(54,214,182,.24); }
+.palette-options i { display:block; width:100%; height:100%; border-radius:5px; }
 .analysis-stack { min-width:0; display:grid; gap:18px; }
 .analysis-card { border-radius:14px; overflow:hidden; }
 .card-head { justify-content:space-between; padding:22px 26px 14px; }
