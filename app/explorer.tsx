@@ -39,6 +39,14 @@ const METRICS: Record<RiskMetric, { label: string; unit: string; short: string }
   affectedRoadKilometers: { label: 'Vías afectadas', unit: ' km', short: 'kilómetros' },
 };
 
+const ECUADOR_PROVINCES = [
+  'Azuay', 'Bolívar', 'Cañar', 'Carchi', 'Chimborazo', 'Cotopaxi', 'El Oro', 'Esmeraldas',
+  'Galápagos', 'Guayas', 'Imbabura', 'Loja', 'Los Ríos', 'Manabí', 'Morona Santiago', 'Napo',
+  'Orellana', 'Pastaza', 'Pichincha', 'Santa Elena', 'Santo Domingo de los Tsáchilas',
+  'Sucumbíos', 'Tungurahua', 'Zamora Chinchipe',
+] as const;
+const ECUADOR_REGIONS = ['Costa', 'Sierra', 'Amazonía', 'Insular'] as const;
+
 const REGION_BY_PROVINCE: Record<string, string> = {
   azuay: 'Sierra', bolivar: 'Sierra', canar: 'Sierra', carchi: 'Sierra', chimborazo: 'Sierra',
   cotopaxi: 'Sierra', imbabura: 'Sierra', loja: 'Sierra', pichincha: 'Sierra', tungurahua: 'Sierra',
@@ -49,7 +57,9 @@ const REGION_BY_PROVINCE: Record<string, string> = {
 };
 
 const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-const regionOf = (province: string) => REGION_BY_PROVINCE[normalize(province)] || 'Sin región';
+const PROVINCE_BY_NORMALIZED_NAME = new Map(ECUADOR_PROVINCES.map((item) => [normalize(item), item]));
+const canonicalProvince = (province: string) => PROVINCE_BY_NORMALIZED_NAME.get(normalize(province)) || province.trim() || 'Sin provincia';
+const regionOf = (province: string) => REGION_BY_PROVINCE[normalize(canonicalProvince(province))] || 'Sin región';
 const numeric = new Intl.NumberFormat('es-EC', { maximumFractionDigits: 1 });
 
 function fallbackNoaa(): NoaaRow[] {
@@ -90,8 +100,9 @@ const DataCanvas = forwardRef<HTMLCanvasElement, {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const draw = () => {
-      const width = Math.max(320, canvas.parentElement?.clientWidth || 900);
-      const height = 360;
+      const parentWidth = canvas.parentElement?.clientWidth || 900;
+      const width = Math.max(320, parentWidth, kind === 'bar' ? labels.length * 64 + 88 : 0);
+      const height = 380;
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = width * ratio;
       canvas.height = height * ratio;
@@ -115,7 +126,7 @@ const DataCanvas = forwardRef<HTMLCanvasElement, {
       context.fillText('C-F Explore', width - 18, 24);
       context.textAlign = 'left';
 
-      const plot = { left: 56, right: width - 20, top: 68, bottom: 319 };
+      const plot = { left: 56, right: width - 20, top: 68, bottom: 315 };
       const rawValues = series.flatMap((item) => item.values).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
       const minValue = rawValues.length ? Math.min(...rawValues) : 0;
       const maxValue = rawValues.length ? Math.max(...rawValues) : 1;
@@ -173,13 +184,20 @@ const DataCanvas = forwardRef<HTMLCanvasElement, {
       context.textAlign = 'center';
       context.fillStyle = '#718384';
       context.font = '8px system-ui, sans-serif';
-      const labelStep = width < 620 ? Math.ceil(labels.length / 6) : 1;
+      const labelStep = kind === 'bar' ? 1 : width < 620 ? Math.ceil(labels.length / 6) : 1;
       labels.forEach((label, index) => {
         if (index % labelStep !== 0) return;
         const x = kind === 'bar'
           ? plot.left + ((plot.right - plot.left) / Math.max(1, labels.length)) * index + ((plot.right - plot.left) / Math.max(1, labels.length)) / 2
           : xFor(index);
-        context.fillText(label.length > 14 ? `${label.slice(0, 13)}…` : label, x, 338);
+        const words = label.split(' ');
+        const lines = words.reduce<string[]>((result, word) => {
+          const last = result[result.length - 1];
+          if (!last || `${last} ${word}`.length > 18) result.push(word);
+          else result[result.length - 1] = `${last} ${word}`;
+          return result;
+        }, []).slice(0, 2);
+        lines.forEach((line, lineIndex) => context.fillText(line, x, 337 + lineIndex * 11));
       });
     };
     draw();
@@ -260,28 +278,35 @@ export default function Explorer() {
   }, [climateIndex, compareYear, noaaRows, year]);
 
   const eventOptions = useMemo(() => [...new Set(eventRows.map((row) => row.event).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')), [eventRows]);
-  const provinces = useMemo(() => [...new Set(eventRows.map((row) => row.province).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')), [eventRows]);
   const eventYears = useMemo(() => [...new Set(eventRows.map((row) => row.year).filter(Boolean))].sort((a, b) => b - a), [eventRows]);
+  const provinceCoverage = useMemo(() => new Set(eventRows.map((row) => canonicalProvince(row.province)).filter((item) => PROVINCE_BY_NORMALIZED_NAME.has(normalize(item)))).size, [eventRows]);
 
   const riskSummary = useMemo(() => {
     const filtered = eventRows.filter((row) =>
       (event === 'todos' || normalize(row.event) === normalize(event)) &&
       (eventYear === 'todos' || row.year === Number(eventYear)) &&
-      (province === 'todas' || normalize(row.province) === normalize(province)) &&
+      (province === 'todas' || canonicalProvince(row.province) === province) &&
       (region === 'todas' || regionOf(row.province) === region)
     );
     const groups = new Map<string, { label: string; events: number; impacted: number; deaths: number; burnedHectares: number; affectedRoadKilometers: number }>();
+    const emptyGroup = (label: string) => ({ label, events: 0, impacted: 0, deaths: 0, burnedHectares: 0, affectedRoadKilometers: 0 });
+    const expectedLabels = grouping === 'province'
+      ? ECUADOR_PROVINCES.filter((item) => (province === 'todas' || item === province) && (region === 'todas' || regionOf(item) === region))
+      : grouping === 'region'
+        ? ECUADOR_REGIONS.filter((item) => (region === 'todas' || item === region) && (province === 'todas' || item === regionOf(province)))
+        : MONTHS;
+    expectedLabels.forEach((label) => groups.set(label, emptyGroup(label)));
     filtered.forEach((row) => {
-      const label = grouping === 'province' ? row.province : grouping === 'region' ? regionOf(row.province) : MONTHS[Math.max(0, row.month - 1)] || 'Sin mes';
-      const current = groups.get(label) || { label, events: 0, impacted: 0, deaths: 0, burnedHectares: 0, affectedRoadKilometers: 0 };
+      const label = grouping === 'province' ? canonicalProvince(row.province) : grouping === 'region' ? regionOf(row.province) : MONTHS[Math.max(0, row.month - 1)] || 'Sin mes';
+      const current = groups.get(label) || emptyGroup(label);
       current.events += row.events; current.impacted += row.impacted; current.deaths += row.deaths;
       current.burnedHectares += row.burnedHectares; current.affectedRoadKilometers += row.affectedRoadMeters / 1000;
       groups.set(label, current);
     });
     const result = [...groups.values()];
     if (grouping === 'month') result.sort((a, b) => MONTHS.indexOf(a.label) - MONTHS.indexOf(b.label));
-    else result.sort((a, b) => b[metric] - a[metric]);
-    return result.slice(0, grouping === 'province' ? 14 : 12);
+    else result.sort((a, b) => b[metric] - a[metric] || a.label.localeCompare(b.label, 'es'));
+    return result;
   }, [event, eventRows, eventYear, grouping, metric, province, region]);
 
   const currentValues = climateSeries[0].values.filter((value): value is number => value !== null);
@@ -291,6 +316,7 @@ export default function Explorer() {
   const comparisonValue = lastMonthIndex >= 0 ? comparisonValues[lastMonthIndex] : null;
   const peakValue = currentValues.length ? Math.max(...currentValues) : null;
   const riskTotal = riskSummary.reduce((sum, row) => sum + row[metric], 0);
+  const riskLeader = riskSummary.find((row) => row[metric] > 0) || null;
 
   const status = view === 'climate' ? noaaState : eventState;
   const exportImage = () => {
@@ -350,8 +376,9 @@ export default function Explorer() {
             <label>Variable<select value={metric} onChange={(e) => setMetric(e.target.value as RiskMetric)}>{Object.entries(METRICS).map(([key, item]) => <option key={key} value={key}>{item.label}</option>)}</select></label>
             <label>Agrupar por<select value={grouping} onChange={(e) => setGrouping(e.target.value as Grouping)}><option value="province">Provincia</option><option value="region">Región natural</option><option value="month">Mes</option></select></label>
             <label>Año<select value={eventYear} onChange={(e) => setEventYear(e.target.value)}><option value="todos">Todos los años</option>{eventYears.map((item) => <option key={item}>{item}</option>)}</select></label>
-            <label>Región<select value={region} onChange={(e) => setRegion(e.target.value)}><option value="todas">Todas las regiones</option>{['Costa','Sierra','Amazonía','Insular'].map((item) => <option key={item}>{item}</option>)}</select></label>
-            <label>Provincia<select value={province} onChange={(e) => setProvince(e.target.value)}><option value="todas">Todas las provincias</option>{provinces.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Región<select value={region} onChange={(e) => { const next = e.target.value; setRegion(next); if (province !== 'todas' && next !== 'todas' && regionOf(province) !== next) setProvince('todas'); }}><option value="todas">Todas las regiones</option>{ECUADOR_REGIONS.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Provincia<select value={province} onChange={(e) => { const next = e.target.value; setProvince(next); if (next !== 'todas') setRegion(regionOf(next)); }}><option value="todas">Todas las provincias</option>{ECUADOR_PROVINCES.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <div className="filter-note"><span>COBERTURA TERRITORIAL</span><strong>{provinceCoverage}/24 provincias</strong><small>{provinceCoverage === 24 ? 'La fuente cubre las 24 provincias del Ecuador.' : 'La lista oficial sigue visible; faltan registros en la fuente cargada.'}</small></div>
           </>}
           <button className="secondary-button" type="button" onClick={exportCsv}>Descargar tabla CSV <span>↓</span></button>
         </aside>
@@ -377,8 +404,8 @@ export default function Explorer() {
                 <p><span className="spark">✦</span><strong>Lectura rápida</strong>{latestValue !== null && comparisonValue !== null ? ` En el último mes disponible, ${year} está ${Math.abs(latestValue - comparisonValue).toFixed(2)} °C ${latestValue >= comparisonValue ? 'por encima' : 'por debajo'} de ${compareYear}.` : ' Selecciona dos años con datos coincidentes para comparar.'}</p>
               </> : <>
                 <div className="metric"><span>TOTAL FILTRADO</span><strong>{numeric.format(riskTotal)}{METRICS[metric].unit}</strong><small>{METRICS[metric].short}</small></div>
-                <div className="metric accent"><span>MAYOR VALOR</span><strong>{riskSummary[0]?.label || '—'}</strong><small>{riskSummary[0] ? `${numeric.format(riskSummary[0][metric])}${METRICS[metric].unit}` : 'sin registros'}</small></div>
-                <p><span className="spark">✦</span><strong>Lectura rápida</strong>{riskSummary[0] ? ` ${riskSummary[0].label} concentra el mayor valor dentro de los filtros seleccionados.` : ' No hay datos para esta combinación de filtros.'}</p>
+                <div className="metric accent"><span>MAYOR VALOR</span><strong>{riskLeader?.label || '—'}</strong><small>{riskLeader ? `${numeric.format(riskLeader[metric])}${METRICS[metric].unit}` : 'sin registros para la variable'}</small></div>
+                <p><span className="spark">✦</span><strong>Lectura rápida</strong>{riskLeader ? ` ${riskLeader.label} concentra el mayor valor dentro de los filtros seleccionados.` : ' No hay valores para esta variable con los filtros seleccionados.'}</p>
               </>}
             </div>
           </article>
